@@ -5,6 +5,7 @@
 
 #define DEFAULT_BLOCK_SIZE 0x100000
 #define VDB_HEADER_SIZE 93
+#define VDB_TOT_HEADER_SIZE 93
 #define VDB_FILE_SIGNATURE 0x76617562
 #define VDB_SALT_SIZE 32
 #define VDB_IV_SIZE 12
@@ -23,7 +24,16 @@ typedef struct
 
 typedef struct
 {
+    void (*aes_256)();
+    void (*sha_256)(uint32_t size, uint8_t *data, uint8_t *hash);
+    void (*chacha20)();
+    void (*hmac_sha_256)();
+} vdb_crypto_fn_t;
+
+typedef struct
+{
     vdb_stream_t stream;
+    vdb_crypto_fn_t crypto;
     uint8_t salt[32];
     uint64_t kdf_rounds;
     uint8_t iv[12];
@@ -33,6 +43,7 @@ typedef struct
     uint32_t n_blocks;
     uint8_t locked;
     uint8_t key[32];
+    uint64_t unlock_time;
 } vdb_t;
 
 typedef enum
@@ -41,8 +52,8 @@ typedef enum
     folder
 } vdb_item_t;
 
-vdb_t *create_vdb(vdb_stream_t stream);
+vdb_t *load_vdb(vdb_stream_t stream, vdb_crypto_fn_t crypto);
 
-void delete_vdb(vdb_t *db);
+void delete_vdb(vdb_t **db);
 
 #endif
