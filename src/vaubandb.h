@@ -14,12 +14,12 @@ typedef enum
 {
     vdb_success,
     vdb_error
-} vdb_error_t;
+} vdb_status_t;
 
 typedef struct
 {
-    vdb_error_t (*read)(uint32_t start, uint32_t size, uint8_t *bytes);
-    vdb_error_t (*write)(uint32_t start, uint32_t size, uint8_t *bytes);
+    vdb_status_t (*read)(uint32_t start, uint32_t size, uint8_t *bytes);
+    vdb_status_t (*write)(uint32_t start, uint32_t size, uint8_t *bytes);
 } vdb_stream_t;
 
 typedef struct
@@ -53,6 +53,8 @@ typedef enum
 } vdb_item_t;
 
 vdb_t *load_vdb(vdb_stream_t stream, vdb_crypto_fn_t crypto);
+
+vdb_status_t unlock_vdb(vdb_t *db, char *passphrase);
 
 void delete_vdb(vdb_t **db);
 

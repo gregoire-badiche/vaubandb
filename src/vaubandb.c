@@ -3,6 +3,10 @@
 
 uint8_t buffer_eq(uint8_t *buffer_1, uint8_t *buffer_2, uint32_t size);
 
+uint8_t *decrypt_block(vdb_t *db, uint32_t block_padding);
+
+vdb_status_t check_block_index(vdb_t *db, uint32_t block_padding);
+
 uint8_t buffer_eq(uint8_t *buffer_1, uint8_t *buffer_2, uint32_t size)
 {
     for (uint32_t i = 0; i < size; i++)
@@ -99,6 +103,33 @@ vdb_t *load_vdb(vdb_stream_t stream, vdb_crypto_fn_t crypto)
     free(reading);
     free(header_hash_computed);
     return db;
+}
+
+vdb_status_t check_block_index(vdb_t *db, uint32_t block_padding)
+{
+    //! POSSIBLE INTEGER OVERFLOW
+    uint32_t block_size = db->block_size + sizeof(uint8_t) * 32 + sizeof(uint32_t); // HMAC (256) + size (32)
+    if((block_padding - db->block_stream_start) % block_size == 0)
+        return vdb_success;
+    return vdb_error;
+}
+
+vdb_status_t unlock_vdb(vdb_t *db, char *passphrase)
+{
+
+}
+
+uint8_t *decrypt_block(vdb_t *db, uint32_t block_padding)
+{
+    if(check_block_index(db, block_padding) == vdb_error)
+        return NULL;
+    
+    uint8_t *hmac_read = (uint8_t *)malloc(sizeof(uint8_t) * 32);
+    if(db->stream.read(block_padding, sizeof(uint8_t) * 32, hmac_read) == vdb_error)
+    {
+        free(hmac_read);
+        return NULL;
+    }
 }
 
 void delete_vdb(vdb_t **db)
