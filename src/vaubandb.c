@@ -1,139 +1,144 @@
 #include <stdlib.h>
 #include "vaubandb.h"
 
-uint8_t buffer_eq(uint8_t *buffer_1, uint8_t *buffer_2, uint32_t size);
+vdb_status_t buffer_eq(uint8_t *buffer_1, uint8_t *buffer_2, uint32_t size);
 
-uint8_t *decrypt_block(vdb_t *db, uint32_t block_padding);
+vdb_status_t decrypt_block(vdb_t *db, uint32_t block_padding, uint8_t **result_buffer);
 
 vdb_status_t check_block_index(vdb_t *db, uint32_t block_padding);
 
-uint8_t buffer_eq(uint8_t *buffer_1, uint8_t *buffer_2, uint32_t size)
+vdb_status_t buffer_eq(uint8_t *buffer_1, uint8_t *buffer_2, uint32_t size)
 {
     for (uint32_t i = 0; i < size; i++)
     {
         if (buffer_1[i] != buffer_2[i])
-            return 0;
+            return vdb_error;
     }
-    return 1;
+    return vdb_success;
 }
 
-vdb_t *load_vdb(vdb_stream_t stream, vdb_crypto_fn_t crypto)
+vdb_status_t load_vdb(vdb_stream_t stream, vdb_crypto_fn_t crypto, vdb_t **result_db)
 {
     uint8_t read_size = 0;
 
     vdb_t *db = (vdb_t *)calloc(1, sizeof(vdb_t));
+    vdb_header_t *header = (vdb_header_t *)malloc(sizeof(vdb_header_t));
+
+    if (db == NULL || header == NULL)
+        return vdb_malloc_error;
+
+    if (stream.read(0, VDB_TOT_HEADER_SIZE, (uint8_t)header) == vdb_couldnt_read)
+    {
+        free(db);
+        free(header);
+        return vdb_couldnt_read;
+    }
+
+    uint8_t hash_computed[32];
+
+    crypto.sha_256(VDB_HEADER_SIZE, header, hash_computed);
+
+    if (buffer_eq(hash_computed, header->hash, 32) == vdb_error)
+    {
+        free(db);
+        free(header);
+        return vdb_hash_error;
+    }
+
     db->stream = stream;
     db->crypto = crypto;
-
-    uint8_t *reading = (uint8_t *)malloc(VDB_TOT_HEADER_SIZE);
-    if (stream.read(0, VDB_TOT_HEADER_SIZE, reading) == vdb_error)
-        return NULL;
-
-    uint32_t signature = *((uint32_t *)(reading + read_size));
-    read_size += sizeof(uint32_t);
-    // Little-endian devices only :(
-    if (signature != VDB_FILE_SIGNATURE)
-    {
-        free(db);
-        free(reading);
-        return NULL;
-    }
-
-    // Only version 0.1 supported!!
-    uint32_t version = *((uint32_t *)(reading + read_size));
-    read_size += sizeof(uint32_t);
-    if (version != 0x00000001)
-    {
-        free(db);
-        free(reading);
-        return NULL;
-    }
-    
-    for (uint8_t i = 0; i < VDB_SALT_SIZE; i++)
-    {
-        db->salt[i] = *(reading + read_size);
-        read_size += sizeof(uint8_t);
-    }
-
-    db->kdf_rounds = *((uint64_t *)(reading + read_size));
-    read_size += sizeof(uint64_t);
-
-    for (uint8_t i = 0; i < VDB_IV_SIZE; i++)
-    {
-        db->iv[i] = *(reading + read_size);
-        read_size += sizeof(uint8_t);
-    }
-
-    db->has_compression = *(reading + read_size);
-    read_size += sizeof(uint8_t);
-
-    db->block_size = *((uint32_t *)(reading + read_size));
-    read_size += sizeof(uint32_t);
-
-    db->block_stream_start = *((uint32_t *)(reading + read_size));
-    read_size += sizeof(uint32_t);
-
-    db->n_blocks = *((uint32_t *)(reading + read_size));
-    read_size += sizeof(uint32_t);
-
-    if (*((uint32_t *)(reading + read_size)) != 0)
-    {
-        free(db);
-        free(reading);
-        return NULL;
-    }
-
-    read_size += sizeof(uint32_t);
-
-    uint8_t *header_hash_read = ((uint8_t *)(reading + read_size));
-    uint8_t *header_hash_computed = (uint8_t *)malloc(sizeof(uint8_t) * 32);
-
-    crypto.sha_256(VDB_HEADER_SIZE, read_size, header_hash_computed);
-
-    if (buffer_eq(header_hash_read, header_hash_computed, 32) == 0)
-    {
-        free(db);
-        free(reading);
-        free(header_hash_computed);
-        return NULL;
-    }
-
+    db->header = header;
     db->locked = 1;
 
-    free(reading);
-    free(header_hash_computed);
-    return db;
+    *result_db = db;
+
+    return vdb_success;
 }
 
 vdb_status_t check_block_index(vdb_t *db, uint32_t block_padding)
 {
     //! POSSIBLE INTEGER OVERFLOW
-    uint32_t block_size = db->block_size + sizeof(uint8_t) * 32 + sizeof(uint32_t); // HMAC (256) + size (32)
-    if((block_padding - db->block_stream_start) % block_size == 0)
+    uint32_t block_size = db->header->block_size + sizeof(uint8_t) * 32 + sizeof(uint32_t); // HMAC (256) + size (32)
+    if ((block_padding - VDB_BLOCK_STREAM_START) % block_size == 0)
         return vdb_success;
     return vdb_error;
 }
 
 vdb_status_t unlock_vdb(vdb_t *db, char *passphrase)
 {
-
 }
 
-uint8_t *decrypt_block(vdb_t *db, uint32_t block_padding)
+vdb_status_t check_block_hmac(vdb_t *db, uint32_t block_padding)
 {
-    if(check_block_index(db, block_padding) == vdb_error)
-        return NULL;
-    
-    uint8_t *hmac_read = (uint8_t *)malloc(sizeof(uint8_t) * 32);
-    if(db->stream.read(block_padding, sizeof(uint8_t) * 32, hmac_read) == vdb_error)
+    if (db->locked)
+        return vdb_error;
+
+    if (check_block_index(db, block_padding) == vdb_error)
+        return vdb_couldnt_read;
+
+    uint8_t hmac_read[32];
+
+    if (db->stream.read(block_padding, sizeof(uint8_t) * 32, hmac_read) == vdb_couldnt_read)
     {
         free(hmac_read);
-        return NULL;
+        return vdb_couldnt_read;
     }
+
+    uint32_t block_size;
+
+    block_padding += sizeof(uint8_t) * 32;
+
+    if (db->stream.read(block_padding, sizeof(uint32_t), &block_padding) == vdb_couldnt_read)
+    {
+        free(hmac_read);
+        return vdb_couldnt_read;
+    }
+
+    block_padding += sizeof(uint32_t);
+
+    uint8_t *reading = (uint8_t *)malloc(block_size * sizeof(uint32_t));
+
+    if (reading == NULL)
+    {
+        return vdb_malloc_error;
+    }
+
+    if (db->stream.read(block_padding, block_size, reading) == vdb_couldnt_read)
+    {
+        free(reading);
+        return vdb_couldnt_read;
+    }
+
+    uint8_t hmac_computed[32];
+
+    db->crypto.hmac_sha_256(32, db->key, block_size, reading, hmac_computed);
+
+    free(reading);
+
+    if (buffer_eq(hmac_computed, hmac_read, 32) == vdb_success)
+    {
+        return vdb_success;
+    }
+    else
+    {
+        return vdb_hash_error;
+    }
+}
+
+vdb_status_t decrypt_block(vdb_t *db, uint32_t block_padding, uint8_t **result_buffer)
+{
+    vdb_status_t res = check_block_hmac(db, block_padding);
+    if (res != vdb_success)
+        return res;
+
+    block_padding += sizeof(uint8_t) * 32 + sizeof(uint32_t);
+
+    
 }
 
 void delete_vdb(vdb_t **db)
 {
+    free((*db)->header);
     free(*db);
     *db = NULL;
 }
