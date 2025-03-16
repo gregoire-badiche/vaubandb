@@ -3,32 +3,35 @@
 #include "vdbutils.h"
 #include "vdbblocks.h"
 
-vdb_status_t load_vdb(vdb_stream_t stream, vdb_crypto_fn_t crypto, vdb_t **result_db)
+status_t load_vdb(vdb_stream_t stream, vdb_crypto_fn_t crypto, vdb_t **result_db)
 {
     uint8_t read_size = 0;
+    status_t res;
 
     vdb_t *db = (vdb_t *)calloc(1, sizeof(vdb_t));
     vdb_header_t *header = (vdb_header_t *)malloc(sizeof(vdb_header_t));
 
     if (db == NULL || header == NULL)
-        return vdb_malloc_error;
+        return malloc_error;
 
-    if (stream.read(0, VDB_TOT_HEADER_SIZE, (uint8_t)header) == vdb_couldnt_read)
+    res = stream.read(0, VDB_TOT_HEADER_SIZE, (uint8_t)header);
+    
+    if (res != success)
     {
         free(db);
         free(header);
-        return vdb_couldnt_read;
+        return res;
     }
 
     uint8_t hash_computed[32];
 
     crypto.sha_256(db->crypto_data, VDB_HEADER_SIZE, header, hash_computed);
 
-    if (buffer_eq(hash_computed, header->hash, sizeof(hash_computed)) == vdb_error)
+    if (buffer_eq(hash_computed, header->hash, sizeof(hash_computed)) == 0)
     {
         free(db);
         free(header);
-        return vdb_hash_error;
+        return hash_error;
     }
 
     db->stream = stream;
@@ -39,18 +42,43 @@ vdb_status_t load_vdb(vdb_stream_t stream, vdb_crypto_fn_t crypto, vdb_t **resul
 
     *result_db = db;
 
-    return vdb_success;
+    return success;
 }
 
-vdb_status_t unlock_vdb(vdb_t *db, uint8_t *passphrase, uint32_t size)
+status_t unlock_vdb(vdb_t *db, uint8_t *passphrase, uint32_t size)
 {
     if (db->locked == 0)
-        return vdb_success;
+        return success;
 
-    vdb_status_t _ = aes_kdf(db, passphrase, size, db->key);
+    aes_kdf(db, passphrase, size, db->key);
 
-    uint32_t n_blocks_corrupted = 0;
+    uint8_t content_key_pre_hash[64];
+    uint8_t header_hmac[32];
 
+    for (uint32_t i = 0; i < 32; i++)
+    {
+        content_key_pre_hash[i] = db->header->salt[i];
+        content_key_pre_hash[i + 32] = db->key[i];
+    }
+
+    db->crypto.sha_256(db->crypto_data, 64, content_key_pre_hash, header_hmac);
+
+    if (buffer_eq(header_hmac, db->header->hmac, 32) == 0)
+    {
+        return hash_error;
+    }
+
+    status_t res = check_db_hash(db);
+
+    db->locked = 0;
+
+    if (res != success)
+    {
+        db->locked = 1;
+        return res;
+    }
+
+    return success;
 }
 
 void delete_vdb(vdb_t **db)

@@ -3,12 +3,8 @@
 
 #include "vdbconsts.h"
 
-vdb_status_t decrypt_block(vdb_t *db, uint32_t block_padding, uint8_t **result_buffer);
+status_t read_data(vdb_t *db, uint32_t padding, uint32_t size, uint8_t *result);
 
-vdb_status_t get_block_size(vdb_t *db, uint32_t padding, uint32_t *size);
-
-vdb_status_t check_block_hash(vdb_t *db, uint32_t block_padding);
-
-vdb_status_t check_db_hash(vdb_t *db);
+status_t check_db_integrity(vdb_t *db);
 
 #endif

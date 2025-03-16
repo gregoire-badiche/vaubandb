@@ -1,16 +1,16 @@
 #include "vdbutils.h"
 
-vdb_status_t buffer_eq(uint8_t *buffer_1, uint8_t *buffer_2, uint32_t size)
+uint8_t buffer_eq(uint8_t *buffer_1, uint8_t *buffer_2, uint32_t size)
 {
     for (uint32_t i = 0; i < size; i++)
     {
         if (buffer_1[i] != buffer_2[i])
-            return vdb_error;
+            return 0;
     }
-    return vdb_success;
+    return 1;
 }
 
-vdb_status_t aes_kdf(vdb_t *db, uint8_t *password, uint32_t password_size, uint8_t *derived_key)
+void aes_kdf(vdb_t *db, uint8_t *password, uint32_t password_size, uint8_t *derived_key)
 {
     int8_t hash[32];
 
@@ -28,6 +28,5 @@ vdb_status_t aes_kdf(vdb_t *db, uint8_t *password, uint32_t password_size, uint8
         derived_key[i] = hash;
     }
 
-    //! Error handling please?
-    return vdb_success;
+    return;
 }
